@@ -10,7 +10,7 @@ RELEASE="24.10"
 KERNEL="6.6.118"
 TARGET="mediatek/filogic"
 PROFILE="cudy_tr3000-v1"
-BASE_URL="https://downloads.openwrt.org/releases/24.10/targets/mediatek/filogic/${RELEASE}/targets/${TARGET}"
+BASE_URL="https://mirrors.tuna.tsinghua.edu.cn/openwrt/releases/24.10/targets/mediatek/filogic/${RELEASE}/targets/${TARGET}"
 PACKAGE_LIST="${SCRIPT_DIR}/pkglist-20260905.txt"
 
 echo "Downloading Image Builder index: ${BASE_URL}/"
