@@ -1,0 +1,17 @@
+Model: Cudy TR3000 256MB v1
+Board id: cudy,tr3000-256mb-v1
+Target: mediatek/filogic
+Architecture: aarch64_cortex-a53
+Kernel: 6.6.118
+Firmware family: Kwrt / OpenGirl
+Release: 24.10-SNAPSHOT
+Build revision: 12.04.2025 (OpenWrt release date string)
+Overlay filesystem: /overlay (upper layer 37.2 MB)
+opkg feeds:
+  https://dl.openwrt.ai/releases/24.10/targets/mediatek/filogic/6.6.118
+  https://dl.openwrt.ai/releases/24.10/packages/aarch64_cortex-a53/base
+  https://dl.openwrt.ai/releases/24.10/packages/aarch64_cortex-a53/packages
+  https://dl.openwrt.ai/releases/24.10/packages/aarch64_cortex-a53/luci
+  https://dl.openwrt.ai/releases/24.10/packages/aarch64_cortex-a53/routing
+  https://dl.openwrt.ai/releases/24.10/packages/aarch64_cortex-a53/kiddin9
+  https://istore.istoreos.com/repo/all/compat
