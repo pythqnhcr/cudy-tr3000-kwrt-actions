@@ -7,7 +7,7 @@ set -euo pipefail
 # ============================================================
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-RELEASE="24.10"
+RELEASE="24.10.8"
 TARGET="mediatek/filogic"
 PROFILE="cudy_tr3000-v1"
 BASE_URL="https://downloads.openwrt.org/releases/${RELEASE}/targets/${TARGET}/"
