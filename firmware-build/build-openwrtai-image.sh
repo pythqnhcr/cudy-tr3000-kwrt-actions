@@ -3,56 +3,28 @@ set -euo pipefail
 
 # ============================================================
 # 脚本：为 Cudy TR3000 v1 构建 OpenWrt 固件（官方源）
-# 功能：自动探测可用版本、解析文件名、过滤无效包
+# 版本：固定使用 24.10.0（已确认可用）
+# 功能：自动解析文件名、过滤无效包、详细日志
 # ============================================================
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+RELEASE="24.10.0"                                     # 固定稳定版本
 TARGET="mediatek/filogic"
 PROFILE="cudy_tr3000-v1"
+BASE_URL="https://downloads.openwrt.org/releases/${RELEASE}/targets/${TARGET}/"
 PACKAGE_LIST="${SCRIPT_DIR}/pkglist-20260905.txt"
 BUILD_LOG="${SCRIPT_DIR}/build.log"
 
-# 候选版本列表（按优先级，第一个成功即可）
-VERSIONS=("24.10.0" "24.10.3" "24.10.5" "24.10.6")
-
-# ============================================================
-# 1. 自动探测可用版本
-# ============================================================
 echo "============================================"
-echo "  OpenWrt 版本探测"
+echo "  OpenWrt Image Builder 下载"
 echo "============================================"
-
-SELECTED_VERSION=""
-for VER in "${VERSIONS[@]}"; do
-    BASE_URL="https://downloads.openwrt.org/releases/${VER}/targets/${TARGET}/"
-    echo ">> 尝试版本 ${VER} ..."
-    if curl -fsSL --connect-timeout 5 "${BASE_URL}" > /dev/null 2>&1; then
-        echo ">> 版本 ${VER} 可用！"
-        SELECTED_VERSION="${VER}"
-        break
-    else
-        echo ">> 版本 ${VER} 不可用"
-    fi
-done
-
-if [ -z "${SELECTED_VERSION}" ]; then
-    echo "ERROR: 所有候选版本均不可用，请检查网络或更新 VERSIONS 列表。"
-    exit 1
-fi
-
-BASE_URL="https://downloads.openwrt.org/releases/${SELECTED_VERSION}/targets/${TARGET}/"
-echo ">> 最终使用版本: ${SELECTED_VERSION}"
+echo ">> 使用版本: ${RELEASE}"
 echo ">> 源地址: ${BASE_URL}"
 
 # ============================================================
-# 2. 下载 Image Builder（动态解析文件名）
+# 1. 解析并下载 Image Builder
 # ============================================================
-echo "============================================"
-echo "  Image Builder 下载"
-echo "============================================"
-
 echo ">> 从 ${BASE_URL} 解析 Image Builder 文件名..."
-# 获取目录列表，匹配 imagebuilder 的 tar.xz 文件
 IB_FILE=$(curl -fsSL "${BASE_URL}" | grep -o 'openwrt-imagebuilder-[^"]*\.tar\.xz' | head -n1)
 
 if [ -z "${IB_FILE}" ]; then
@@ -83,7 +55,7 @@ cd "${IB_DIR}"
 echo ">> 进入目录: $(pwd)"
 
 # ============================================================
-# 3. 智能包过滤（只保留可用包）
+# 2. 智能包过滤（只保留可用包）
 # ============================================================
 echo "============================================"
 echo "  包列表过滤"
@@ -134,7 +106,7 @@ else
 fi
 
 # ============================================================
-# 4. 构建固件
+# 3. 构建固件
 # ============================================================
 echo "============================================"
 echo "  开始构建固件"
@@ -169,7 +141,7 @@ if [ ${BUILD_EXIT} -ne 0 ]; then
 fi
 
 # ============================================================
-# 5. 输出结果
+# 4. 输出结果
 # ============================================================
 echo "============================================"
 echo "  构建成功！"
