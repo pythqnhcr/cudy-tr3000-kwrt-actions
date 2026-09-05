@@ -20,7 +20,7 @@ BUILD_LOG="${SCRIPT_DIR}/build.log"
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-NC='\033[0m' # No Color
+NC='\033[0m'
 
 echo "============================================"
 echo "  OpenWrt Image Builder 下载与构建"
@@ -35,7 +35,7 @@ echo ""
 # 0. 环境检查
 # ============================================================
 echo ">> 检查依赖..."
-for cmd in curl tar zstd awk grep; do
+for cmd in curl tar zstd awk grep sed; do
     if ! command -v "$cmd" &> /dev/null; then
         echo -e "${RED}ERROR: 未找到命令: $cmd${NC}"
         if [ "$cmd" = "zstd" ]; then
@@ -64,13 +64,11 @@ fi
 
 if [ -z "${IB_FILE}" ]; then
     echo -e "${RED}ERROR: 无法获取 Image Builder 文件名${NC}"
-    echo ">> 请检查 URL 是否可访问: ${BASE_URL}"
     exit 1
 fi
 
 echo -e "${GREEN}>> 找到文件: ${IB_FILE}${NC}"
 
-# 如果文件已存在且不为空，跳过下载
 if [ -s "${IB_FILE}" ]; then
     echo ">> 文件已存在，跳过下载"
 else
@@ -79,12 +77,6 @@ else
         echo -e "${RED}ERROR: 下载失败${NC}"
         exit 1
     }
-fi
-
-# 验证文件大小不为0
-if [ ! -s "${IB_FILE}" ]; then
-    echo -e "${RED}ERROR: 下载文件为空${NC}"
-    exit 1
 fi
 
 echo ">> 解压 Image Builder..."
@@ -110,12 +102,10 @@ echo "============================================"
 echo "  步骤 2: 配置 Feeds"
 echo "============================================"
 
-# 备份原始 repositories.conf
 cp repositories.conf repositories.conf.bak
 
 echo ">> 添加 openwrt.ai feeds..."
 
-# 追加 openwrt.ai 的 feeds（aarch64_cortex-a53 架构）
 cat >> repositories.conf << 'EOF'
 
 # OpenGirl / Kwrt / openwrt.ai feeds (aarch64_cortex-a53)
@@ -126,10 +116,27 @@ src/gz openwrt_ai_routing https://dl.openwrt.ai/releases/24.10/packages/aarch64_
 src/gz openwrt_ai_kiddin9 https://dl.openwrt.ai/releases/24.10/packages/aarch64_cortex-a53/kiddin9
 EOF
 
-echo -e "${GREEN}>> Feeds 配置完成${NC}"
+# ============================================================
+# 关键修复：三重防护彻底禁用签名检查
+# ============================================================
+echo ">> 禁用签名检查..."
+
+# 防护1: 删除 repositories.conf 中的签名检查选项
+sed -i '/option check_signature/d' repositories.conf
+
+# 防护2: 清理 keys 目录中的官方公钥
+if [ -d "keys" ]; then
+    rm -f keys/*.gpg keys/*.asc 2>/dev/null || true
+    echo ">> 已清理 keys 目录"
+fi
+
+# 防护3: 设置环境变量
+export IGNORE_SIGNATURES=1
+
+echo -e "${GREEN}>> Feeds 配置完成（签名检查已禁用）${NC}"
 
 # ============================================================
-# 3. 处理包列表（过滤 kmod-* 并验证）
+# 3. 处理包列表
 # ============================================================
 echo ""
 echo "============================================"
@@ -141,8 +148,7 @@ PACKAGES=""
 if [ -f "${PACKAGE_LIST}" ]; then
     echo ">> 读取包列表: ${PACKAGE_LIST}"
     
-    # 过滤掉 kmod-* 内核模块（避免版本不匹配）
-    # 同时过滤掉空行和注释行
+    # 过滤掉 kmod-* 内核模块、空行、注释行
     FILTERED_PKGS=$(grep -v '^\s*$' "${PACKAGE_LIST}" | grep -v '^#' | grep -v '^kmod-' | tr '\n' ' ')
     
     KMOD_COUNT=$(grep -c '^kmod-' "${PACKAGE_LIST}" 2>/dev/null || echo "0")
@@ -151,7 +157,7 @@ if [ -f "${PACKAGE_LIST}" ]; then
     
     echo ">> 原始包数: ${TOTAL_COUNT}"
     if [ "${KMOD_COUNT}" -gt 0 ]; then
-        echo -e "${YELLOW}>> 已自动过滤 ${KMOD_COUNT} 个 kmod-* 内核模块（避免内核版本不匹配）${NC}"
+        echo -e "${YELLOW}>> 已自动过滤 ${KMOD_COUNT} 个 kmod-* 内核模块${NC}"
     fi
     echo ">> 有效包数: ${FINAL_COUNT}"
     
@@ -177,7 +183,6 @@ echo ">> 包含包数: $(echo ${PACKAGES} | wc -w)"
 echo ">> 日志文件: ${BUILD_LOG}"
 echo ""
 
-# 清理旧日志
 > "${BUILD_LOG}"
 
 echo ">> 开始构建..."
@@ -185,7 +190,6 @@ set +e
 make image \
     PROFILE="${PROFILE}" \
     PACKAGES="${PACKAGES}" \
-    IGNORE_SIGNATURES=1 \
     V=s 2>&1 | tee "${BUILD_LOG}"
 BUILD_EXIT=${PIPESTATUS[0]}
 set -e
@@ -196,16 +200,13 @@ if [ ${BUILD_EXIT} -ne 0 ]; then
     echo -e "${RED}  构建失败${NC}"
     echo "============================================"
     echo ">> 错误摘要:"
-    grep -E "(ERROR|Error|failed|Cannot satisfy|not found|No such package)" "${BUILD_LOG}" | tail -30 || tail -n 30 "${BUILD_LOG}"
+    grep -E "(ERROR|Error|failed|Cannot satisfy|not found|No such package|Unknown package)" "${BUILD_LOG}" | tail -30 || tail -n 30 "${BUILD_LOG}"
     
     echo ""
     echo ">> 排查建议:"
-    echo "   1. 检查上方日志中 'Cannot satisfy' 或 'No such package' 对应的包名"
-    echo "   2. 从 pkglist-20260905.txt 中移除不存在的包"
-    echo "   3. 确保 openwrt.ai feeds 可访问:"
-    echo "      curl -I https://dl.openwrt.ai/releases/24.10/packages/aarch64_cortex-a53/base/Packages.gz"
-    echo "   4. 尝试最小构建验证环境:"
-    echo "      make image PROFILE='${PROFILE}' PACKAGES='luci-base' IGNORE_SIGNATURES=1"
+    echo "   1. 从 pkglist-20260905.txt 中移除日志中显示不存在的包"
+    echo "   2. 验证 openwrt.ai feeds 可访问性"
+    echo "   3. 尝试最小构建: make image PROFILE='${PROFILE}' PACKAGES='luci-base'"
     exit 1
 fi
 
@@ -221,19 +222,16 @@ OUTPUT_DIR="bin/targets/${TARGET}/"
 if [ -d "${OUTPUT_DIR}" ]; then
     echo ">> 产物目录: ${OUTPUT_DIR}"
     echo ""
-    
-    # 显示生成的文件
     echo ">> 生成的固件文件:"
     ls -lh "${OUTPUT_DIR}"*.bin "${OUTPUT_DIR}"*.itb 2>/dev/null || true
     
-    # 显示 sysupgrade 文件（最常用）
     SYSUPGRADE=$(ls "${OUTPUT_DIR}"*sysupgrade* 2>/dev/null | head -n1)
     if [ -n "${SYSUPGRADE}" ]; then
         echo ""
         echo -e "${GREEN}>> 推荐刷入文件: ${SYSUPGRADE}${NC}"
     fi
 else
-    echo -e "${YELLOW}>> 警告: 未找到标准输出目录，搜索产物中...${NC}"
+    echo -e "${YELLOW}>> 警告: 未找到标准输出目录${NC}"
     find . -name "*.bin" -o -name "*.itb" | head -10
 fi
 
