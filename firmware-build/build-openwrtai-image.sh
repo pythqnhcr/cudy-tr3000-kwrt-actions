@@ -2,63 +2,38 @@
 set -euo pipefail
 
 # ============================================================
-# 脚本：为 Cudy TR3000 v1 构建 OpenGirl (Kwrt) 固件
-# 功能：自动下载 Image Builder，过滤无效包，构建固件
-# 作者：自动化构建脚本
+# 脚本：为 Cudy TR3000 v1 构建 OpenWrt 固件（官方源）
+# 说明：由于 dl.openwrt.ai 不可用，改用官方源，动态解析 Image Builder 文件名
 # ============================================================
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 RELEASE="24.10"
 TARGET="mediatek/filogic"
 PROFILE="cudy_tr3000-v1"
-KERNEL="6.6.118"
-
-# 源配置（按优先级）
-SOURCES=(
-    "https://dl.openwrt.ai/releases/${RELEASE}/targets/${TARGET}/"
-    "https://downloads.openwrt.org/releases/${RELEASE}/targets/${TARGET}/"
-)
-
+BASE_URL="https://downloads.openwrt.org/releases/${RELEASE}/targets/${TARGET}/"
 PACKAGE_LIST="${SCRIPT_DIR}/pkglist-20260905.txt"
 BUILD_LOG="${SCRIPT_DIR}/build.log"
 
 # ============================================================
-# 1. 下载 Image Builder（带自动源切换）
+# 1. 下载 Image Builder（动态解析文件名）
 # ============================================================
 echo "============================================"
 echo "  OpenWrt Image Builder 下载"
 echo "============================================"
 
-IB_FILE=""
-SELECTED_SOURCE=""
+echo ">> 尝试从 ${BASE_URL} 解析 Image Builder 文件名..."
+# 获取目录列表，匹配 imagebuilder 的 tar.xz 文件
+IB_FILE=$(curl -fsSL "${BASE_URL}" | grep -o 'openwrt-imagebuilder-[^"]*\.tar\.xz' | head -n1)
 
-for SOURCE in "${SOURCES[@]}"; do
-    echo ">> 尝试源: ${SOURCE}"
-    # 尝试解析文件名
-    IB_FILE="$(curl -fsSL --connect-timeout 10 "${SOURCE}" 2>/dev/null | grep -oE 'openwrt-imagebuilder-[^"<>]+\.tar\.xz' | head -n1 || true)"
-    
-    if [ -n "${IB_FILE}" ]; then
-        SELECTED_SOURCE="${SOURCE}"
-        echo ">> 找到文件: ${IB_FILE}"
-        break
-    else
-        echo ">> 此源未找到 Image Builder，尝试下一个..."
-    fi
-done
-
-# 如果所有源都失败，使用硬编码文件名（官方最常见）
 if [ -z "${IB_FILE}" ]; then
-    echo ">> 所有源解析失败，使用硬编码文件名..."
-    IB_FILE="openwrt-imagebuilder-${RELEASE}-${TARGET/\//-}.Linux-x86_64.tar.xz"
-    SELECTED_SOURCE="${SOURCES[1]}"  # 使用官方源
-    echo ">> 尝试: ${IB_FILE}"
+    echo ">> 未找到任何 Image Builder 文件，请检查源目录。"
+    exit 1
 fi
 
-# 下载
-echo ">> 从 ${SELECTED_SOURCE} 下载 ${IB_FILE}"
-curl -fL --retry 3 --retry-delay 5 -O "${SELECTED_SOURCE}${IB_FILE}" || {
-    echo "ERROR: 下载失败！请检查网络或手动下载。"
-    echo "手动下载命令: wget ${SELECTED_SOURCE}${IB_FILE}"
+echo ">> 找到文件: ${IB_FILE}"
+echo ">> 下载中..."
+curl -fL --retry 3 --retry-delay 5 -O "${BASE_URL}${IB_FILE}" || {
+    echo "ERROR: 下载失败！"
     exit 1
 }
 
@@ -68,7 +43,7 @@ tar -xJf "${IB_FILE}" || {
     exit 1
 }
 
-# 进入目录（支持带后缀的目录名）
+# 进入目录
 IB_DIR="$(find . -maxdepth 1 -type d -name 'openwrt-imagebuilder-*' | head -n1)"
 if [ -z "${IB_DIR}" ]; then
     echo "ERROR: 未找到 Image Builder 目录"
@@ -78,17 +53,16 @@ cd "${IB_DIR}"
 echo ">> 进入目录: $(pwd)"
 
 # ============================================================
-# 2. 智能包过滤（自动跳过不存在的包）
+# 2. 智能包过滤（只保留可用包）
 # ============================================================
 echo "============================================"
 echo "  包列表过滤"
 echo "============================================"
 
-# 生成可用包索引
 echo ">> 生成可用包列表..."
 make package_index 2>/dev/null || true
 
-# 收集所有可用包名（兼容多种目录结构）
+# 收集所有可用包名
 AVAILABLE_PKGS_FILE="/tmp/available_pkgs.txt"
 find ./packages -name "Packages" -exec grep -h "^Package:" {} \; 2>/dev/null | awk '{print $2}' | sort -u > "${AVAILABLE_PKGS_FILE}"
 
@@ -111,7 +85,6 @@ if [ -f "${PACKAGE_LIST}" ]; then
         fi
     done
     
-    # 输出统计信息
     echo ">> 总包数: ${#ALL_PKGS[@]}"
     echo ">> 有效包: ${#FILTERED_PKGS[@]}"
     echo ">> 跳过包: ${#MISSING_PKGS[@]}"
@@ -138,23 +111,17 @@ echo "  开始构建固件"
 echo "============================================"
 echo ">> Profile: ${PROFILE}"
 echo ">> 包含包数: $(echo ${PACKAGES} | wc -w)"
-echo ">> 完整包列表（前10个）:"
-echo ${PACKAGES} | tr ' ' '\n' | head -10
 echo ""
 
-# 构建（捕获详细日志）
 echo ">> 开始构建（日志保存至 ${BUILD_LOG}）..."
-set +e  # 暂时允许错误捕获
-
+set +e
 make image \
     PROFILE="${PROFILE}" \
     PACKAGES="${PACKAGES}" \
     V=s 2>&1 | tee "${BUILD_LOG}"
-
 BUILD_EXIT=$?
 set -e
 
-# 检查结果
 if [ ${BUILD_EXIT} -ne 0 ]; then
     echo ""
     echo "============================================"
