@@ -6,6 +6,13 @@ set -euo pipefail
 # 适配: Cudy TR3000 v1 (mediatek/filogic, aarch64_cortex-a53)
 # 内核: 6.6.118
 # 作者: FirmwareSister (OpenGirl)
+#
+# 包列表格式说明:
+#   支持两种格式，脚本会自动处理：
+#   1. 纯包名: 每行一个包名
+#      例: luci-app-passwall
+#   2. opkg list-installed 格式: 包名 - 版本号
+#      例: luci-app-passwall - 2023.11.01~44365eb1-r1
 # ============================================================
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -64,6 +71,7 @@ fi
 
 if [ -z "${IB_FILE}" ]; then
     echo -e "${RED}ERROR: 无法获取 Image Builder 文件名${NC}"
+    echo ">> 请检查 URL 是否可访问: ${BASE_URL}"
     exit 1
 fi
 
@@ -77,6 +85,11 @@ else
         echo -e "${RED}ERROR: 下载失败${NC}"
         exit 1
     }
+fi
+
+if [ ! -s "${IB_FILE}" ]; then
+    echo -e "${RED}ERROR: 下载文件为空${NC}"
+    exit 1
 fi
 
 echo ">> 解压 Image Builder..."
@@ -116,27 +129,19 @@ src/gz openwrt_ai_routing https://dl.openwrt.ai/releases/24.10/packages/aarch64_
 src/gz openwrt_ai_kiddin9 https://dl.openwrt.ai/releases/24.10/packages/aarch64_cortex-a53/kiddin9
 EOF
 
-# ============================================================
-# 关键修复：三重防护彻底禁用签名检查
-# ============================================================
+# 禁用签名检查（三重防护）
 echo ">> 禁用签名检查..."
-
-# 防护1: 删除 repositories.conf 中的签名检查选项
 sed -i '/option check_signature/d' repositories.conf
-
-# 防护2: 清理 keys 目录中的官方公钥
 if [ -d "keys" ]; then
     rm -f keys/*.gpg keys/*.asc 2>/dev/null || true
     echo ">> 已清理 keys 目录"
 fi
-
-# 防护3: 设置环境变量
 export IGNORE_SIGNATURES=1
 
-echo -e "${GREEN}>> Feeds 配置完成（签名检查已禁用）${NC}"
+echo -e "${GREEN}>> Feeds 配置完成${NC}"
 
 # ============================================================
-# 3. 处理包列表
+# 3. 处理包列表（关键修复：正确提取包名）
 # ============================================================
 echo ""
 echo "============================================"
@@ -148,24 +153,48 @@ PACKAGES=""
 if [ -f "${PACKAGE_LIST}" ]; then
     echo ">> 读取包列表: ${PACKAGE_LIST}"
     
-    # 过滤掉 kmod-* 内核模块、空行、注释行
-    FILTERED_PKGS=$(grep -v '^\s*$' "${PACKAGE_LIST}" | grep -v '^#' | grep -v '^kmod-' | tr '\n' ' ')
+    # 关键修复：用 awk '{print $1}' 提取每行的第一个字段（包名）
+    # 支持格式：
+    #   - 纯包名: "luci-app-passwall"
+    #   - opkg格式: "luci-app-passwall - 2023.11.01~44365eb1-r1"
+    #   - 空格分隔: "luci-app-passwall 2023.11.01~44365eb1-r1"
+    #
+    # 过滤规则：
+    #   1. 去掉空行
+    #   2. 去掉注释行（以 # 开头）
+    #   3. 去掉 kmod-* 内核模块（避免内核版本不匹配）
+    #   4. awk '{print $1}' 提取包名
+    #   5. sort -u 去重
     
-    KMOD_COUNT=$(grep -c '^kmod-' "${PACKAGE_LIST}" 2>/dev/null || echo "0")
-    TOTAL_COUNT=$(grep -v '^\s*$' "${PACKAGE_LIST}" | grep -v '^#' | wc -l)
-    FINAL_COUNT=$(echo "${FILTERED_PKGS}" | wc -w)
+    RAW_LINES=$(grep -v '^\s*$' "${PACKAGE_LIST}" | grep -v '^#')
     
-    echo ">> 原始包数: ${TOTAL_COUNT}"
+    # 统计原始行数
+    TOTAL_LINES=$(echo "${RAW_LINES}" | wc -l)
+    
+    # 提取包名并过滤
+    FILTERED_PKGS=$(echo "${RAW_LINES}" | grep -v '^kmod-' | awk '{print $1}' | sort -u)
+    
+    KMOD_COUNT=$(echo "${RAW_LINES}" | grep -c '^kmod-' 2>/dev/null || echo "0")
+    FINAL_COUNT=$(echo "${FILTERED_PKGS}" | wc -l)
+    
+    echo ">> 原始行数: ${TOTAL_LINES}"
     if [ "${KMOD_COUNT}" -gt 0 ]; then
-        echo -e "${YELLOW}>> 已自动过滤 ${KMOD_COUNT} 个 kmod-* 内核模块${NC}"
+        echo -e "${YELLOW}>> 已过滤 ${KMOD_COUNT} 个 kmod-* 内核模块${NC}"
     fi
     echo ">> 有效包数: ${FINAL_COUNT}"
     
-    PACKAGES="${FILTERED_PKGS}"
+    # 转成空格分隔的字符串
+    PACKAGES=$(echo "${FILTERED_PKGS}" | tr '\n' ' ')
     
-    if [ -z "${PACKAGES}" ]; then
+    if [ -z "${PACKAGES}" ] || [ "${PACKAGES}" = " " ]; then
         echo -e "${YELLOW}>> 警告: 包列表为空，将使用默认包${NC}"
+        PACKAGES=""
     fi
+    
+    # 调试输出：显示前10个包
+    echo ">> 前10个包:"
+    echo "${FILTERED_PKGS}" | head -10 | sed 's/^/   - /'
+    
 else
     echo -e "${YELLOW}>> 未找到包列表: ${PACKAGE_LIST}${NC}"
     echo ">> 将使用默认包构建"
@@ -204,9 +233,11 @@ if [ ${BUILD_EXIT} -ne 0 ]; then
     
     echo ""
     echo ">> 排查建议:"
-    echo "   1. 从 pkglist-20260905.txt 中移除日志中显示不存在的包"
-    echo "   2. 验证 openwrt.ai feeds 可访问性"
-    echo "   3. 尝试最小构建: make image PROFILE='${PROFILE}' PACKAGES='luci-base'"
+    echo "   1. 如果显示 'Unknown package'，从 pkglist-20260905.txt 中删除对应包名"
+    echo "   2. 确保 openwrt.ai feeds 可访问:"
+    echo "      curl -s https://dl.openwrt.ai/releases/24.10/packages/aarch64_cortex-a53/base/Packages.gz | gunzip | head"
+    echo "   3. 尝试最小构建验证:"
+    echo "      make image PROFILE='${PROFILE}' PACKAGES='luci-base'"
     exit 1
 fi
 
