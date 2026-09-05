@@ -1,0 +1,21 @@
+name: Build Cudy TR3000 firmware
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run openwrt.ai Image Builder
+        working-directory: firmware-build
+        run: |
+          chmod +x build-openwrtai-image.sh
+          ./build-openwrtai-image.sh
+      - name: Upload firmware
+        uses: actions/upload-artifact@v4
+        with:
+          name: cudy-tr3000-firmware
+          path: firmware-build/bin/targets/mediatek/filogic/*
+          if-no-files-found: error
