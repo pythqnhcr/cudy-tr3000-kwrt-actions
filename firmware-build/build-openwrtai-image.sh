@@ -2,13 +2,16 @@
 set -euo pipefail
 
 # ============================================================
-# 脚本：为 Cudy TR3000 v1 构建 OpenWrt 固件（官方源）
-# 版本：固定使用 24.10.0（已确认可用）
-# 功能：自动解析文件名、过滤无效包、详细日志
+# 修复版：Cudy TR3000 v1 固件构建脚本
+# 变化：
+#   1. RELEASE 改为完整版本号 24.10.0
+#   2. 扩展名 .tar.xz → .tar.zst
+#   3. 添加 openwrt.ai feeds 到 Image Builder
+#   4. 自动过滤 Image Builder 中不可用的包
 # ============================================================
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-RELEASE="24.10.0"                                     # 固定稳定版本
+RELEASE="24.10.0"
 TARGET="mediatek/filogic"
 PROFILE="cudy_tr3000-v1"
 BASE_URL="https://downloads.openwrt.org/releases/${RELEASE}/targets/${TARGET}/"
@@ -25,7 +28,7 @@ echo ">> 源地址: ${BASE_URL}"
 # 1. 解析并下载 Image Builder
 # ============================================================
 echo ">> 从 ${BASE_URL} 解析 Image Builder 文件名..."
-IB_FILE=$(curl -fsSL "${BASE_URL}" | grep -o 'openwrt-imagebuilder-[^"]*\.tar\.xz' | head -n1)
+IB_FILE=$(curl -fsSL "${BASE_URL}" | grep -o 'openwrt-imagebuilder-[^"<>]*\.tar\.zst' | head -n1)
 
 if [ -z "${IB_FILE}" ]; then
     echo "ERROR: 未找到任何 Image Builder 文件，请检查源目录。"
@@ -40,7 +43,7 @@ curl -fL --retry 3 --retry-delay 5 -O "${BASE_URL}${IB_FILE}" || {
 }
 
 echo ">> 解压 Image Builder..."
-tar -xJf "${IB_FILE}" || {
+tar --zstd -xf "${IB_FILE}" || {
     echo "ERROR: 解压失败，文件可能损坏。"
     exit 1
 }
@@ -55,7 +58,30 @@ cd "${IB_DIR}"
 echo ">> 进入目录: $(pwd)"
 
 # ============================================================
-# 2. 智能包过滤（只保留可用包）
+# 2. 添加 openwrt.ai 的 feeds（关键修复）
+# ============================================================
+echo "============================================"
+echo "  添加 openwrt.ai feeds"
+echo "============================================"
+
+# 备份原始 repositories.conf
+cp repositories.conf repositories.conf.bak
+
+# 追加 openwrt.ai 的 feeds（与路由器 opkg 地址一致）
+cat >> repositories.conf << 'EOF'
+
+# openwrt.ai / Kwrt feeds
+src/gz openwrt_ai_base https://dl.openwrt.ai/releases/24.10/packages/aarch64_cortex-a53/base
+src/gz openwrt_ai_packages https://dl.openwrt.ai/releases/24.10/packages/aarch64_cortex-a53/packages
+src/gz openwrt_ai_luci https://dl.openwrt.ai/releases/24.10/packages/aarch64_cortex-a53/luci
+src/gz openwrt_ai_routing https://dl.openwrt.ai/releases/24.10/packages/aarch64_cortex-a53/routing
+src/gz openwrt_ai_kiddin9 https://dl.openwrt.ai/releases/24.10/packages/aarch64_cortex-a53/kiddin9
+EOF
+
+echo ">> Feeds 已更新"
+
+# ============================================================
+# 3. 智能包过滤（只保留可用包）
 # ============================================================
 echo "============================================"
 echo "  包列表过滤"
@@ -106,7 +132,7 @@ else
 fi
 
 # ============================================================
-# 3. 构建固件
+# 4. 构建固件
 # ============================================================
 echo "============================================"
 echo "  开始构建固件"
@@ -141,7 +167,7 @@ if [ ${BUILD_EXIT} -ne 0 ]; then
 fi
 
 # ============================================================
-# 4. 输出结果
+# 5. 输出结果
 # ============================================================
 echo "============================================"
 echo "  构建成功！"
