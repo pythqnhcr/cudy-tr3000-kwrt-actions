@@ -18,7 +18,7 @@ BUILD_LOG="${SCRIPT_DIR}/build.log"
 EXCLUDE_LOG="${SCRIPT_DIR}/excluded_packages.txt"
 
 # 已知问题包黑名单
-PROBLEMATIC_PKGS="luci-lib-fs autocore automount ntfs3-mount luci-app-turboacc dnsmasq wifi-scripts speedtest-cli"
+PROBLEMATIC_PKGS="luci-lib-fs autocore automount ntfs3-mount luci-app-turboacc dnsmasq wifi-scripts speedtest-cli Crack-Campus-Network luci-app-adguardhome luci-app-autoshell luci-app-modem luci-app-oaf luci-proto-minieap netspeedtest kmod-mt7915e"
 
 # 颜色输出
 RED='\033[0;31m'
@@ -251,7 +251,7 @@ while [ $RETRY -lt $MAX_RETRIES ]; do
         done
     fi
     
-    # 检测2: Cannot install package（文件冲突或依赖问题）
+    # 检测2: Cannot install package
     CONFLICT_PKGS=$(grep -oP "Cannot install package \K\S+" "${BUILD_LOG}" | sort -u)
     if [ -n "${CONFLICT_PKGS}" ]; then
         echo ""
@@ -266,7 +266,7 @@ while [ $RETRY -lt $MAX_RETRIES ]; do
         done
     fi
     
-    # 检测3: check_data_file_clashes - 从日志中提取冲突的包名
+    # 检测3: check_data_file_clashes
     CLASH_PKGS=$(grep "check_data_file_clashes: Package" "${BUILD_LOG}" | sed 's/.*Package //;s/ wants.*//' | sort -u)
     if [ -n "${CLASH_PKGS}" ]; then
         echo ""
@@ -276,6 +276,21 @@ while [ $RETRY -lt $MAX_RETRIES ]; do
                 continue
             fi
             echo "   ❌ ${pkg} (File clash)"
+            echo "${pkg}" >> "${EXCLUDE_PKGS}"
+            EXCLUDE_PKGS="${EXCLUDE_PKGS} ${pkg}"
+        done
+    fi
+    
+    # 检测4: 依赖不满足或架构不兼容
+    DEP_FAILED_PKGS=$(grep -E "pkg_hash_check_unresolved: cannot find dependency|pkg_hash_fetch_best_installation_candidate: Packages for .* found, but incompatible" "${BUILD_LOG}" | grep -oP "Packages for \K\S+" | sort -u)
+    if [ -n "${DEP_FAILED_PKGS}" ]; then
+        echo ""
+        echo -e "${YELLOW}>> 发现依赖不满足的包:${NC}"
+        for pkg in ${DEP_FAILED_PKGS}; do
+            if echo "${EXCLUDE_PKGS}" | grep -qw "${pkg}"; then
+                continue
+            fi
+            echo "   ❌ ${pkg} (Dependency/Architecture mismatch)"
             echo "${pkg}" >> "${EXCLUDE_LOG}"
             EXCLUDE_PKGS="${EXCLUDE_PKGS} ${pkg}"
         done
@@ -325,9 +340,12 @@ if [ -s "${EXCLUDE_LOG}" ]; then
     echo "   - kmod-*: 内核模块版本不匹配 Image Builder 内核"
     echo "   - dnsmasq: 与 dnsmasq-full 冲突，后者已包含所有功能"
     echo "   - wifi-scripts: 与 my-default-settings 文件冲突"
-    echo "   - luci-lib-fs / autocore / automount / ntfs3-mount / luci-app-turboacc:"
-    echo "     来自 Lean LEDE 源码或已废弃，24.10 下会导致 postinst 失败"
-    echo "   - speedtest-cli: 在所有 feeds 中均不存在"
+    echo "   - luci-app-adguardhome: 与 adguardhome 文件冲突"
+    echo "   - luci-app-autoshell: 与 luci-app-autoreboot 文件冲突"
+    echo "   - luci-proto-minieap: 与 luci-app-minieap 文件冲突"
+    echo "   - netspeedtest: 与 luci-app-netspeedtest 文件冲突"
+    echo "   - luci-app-modem: 依赖 kmod-pcie_mhi 缺失"
+    echo "   - luci-app-oaf: 依赖 kmod-oaf 缺失"
     echo "   - 其他: 在所有 feeds 中均不存在或存在文件冲突"
 fi
 
