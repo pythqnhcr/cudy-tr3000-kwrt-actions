@@ -7,12 +7,10 @@ set -euo pipefail
 # 内核: 6.6.118
 # 作者: FirmwareSister (OpenGirl)
 #
-# 包列表格式说明:
-#   支持两种格式，脚本会自动处理：
-#   1. 纯包名: 每行一个包名
-#      例: luci-app-passwall
-#   2. opkg list-installed 格式: 包名 - 版本号
-#      例: luci-app-passwall - 2023.11.01~44365eb1-r1
+# 第三方源说明:
+#   - openwrt.ai: OpenGirl/Kwrt 主源 (已添加)
+#   - fantastic-packages: 扩展包预编译源 (已添加)
+#   - Lean LEDE/OpenAppFilter 等: 源码包，Image Builder 无法直接安装
 # ============================================================
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -22,11 +20,13 @@ PROFILE="cudy_tr3000-v1"
 BASE_URL="https://downloads.openwrt.org/releases/${RELEASE}/targets/${TARGET}/"
 PACKAGE_LIST="${SCRIPT_DIR}/pkglist-20260905.txt"
 BUILD_LOG="${SCRIPT_DIR}/build.log"
+EXCLUDE_LOG="${SCRIPT_DIR}/excluded_packages.txt"
 
 # 颜色输出
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 NC='\033[0m'
 
 echo "============================================"
@@ -35,7 +35,6 @@ echo "============================================"
 echo ">> 版本: ${RELEASE}"
 echo ">> 设备: ${PROFILE}"
 echo ">> 目标: ${TARGET}"
-echo ">> 源地址: ${BASE_URL}"
 echo ""
 
 # ============================================================
@@ -71,7 +70,6 @@ fi
 
 if [ -z "${IB_FILE}" ]; then
     echo -e "${RED}ERROR: 无法获取 Image Builder 文件名${NC}"
-    echo ">> 请检查 URL 是否可访问: ${BASE_URL}"
     exit 1
 fi
 
@@ -108,7 +106,7 @@ cd "${IB_DIR}"
 echo -e "${GREEN}>> 进入目录: $(pwd)${NC}"
 
 # ============================================================
-# 2. 添加 OpenGirl / openwrt.ai 的 feeds
+# 2. 配置 Feeds（添加多个第三方预编译源）
 # ============================================================
 echo ""
 echo "============================================"
@@ -117,7 +115,7 @@ echo "============================================"
 
 cp repositories.conf repositories.conf.bak
 
-echo ">> 添加 openwrt.ai feeds..."
+echo ">> 添加第三方预编译源..."
 
 cat >> repositories.conf << 'EOF'
 
@@ -127,21 +125,31 @@ src/gz openwrt_ai_packages https://dl.openwrt.ai/releases/24.10/packages/aarch64
 src/gz openwrt_ai_luci https://dl.openwrt.ai/releases/24.10/packages/aarch64_cortex-a53/luci
 src/gz openwrt_ai_routing https://dl.openwrt.ai/releases/24.10/packages/aarch64_cortex-a53/routing
 src/gz openwrt_ai_kiddin9 https://dl.openwrt.ai/releases/24.10/packages/aarch64_cortex-a53/kiddin9
+
+# fantastic-packages 扩展包源
+src/gz fantastic_packages_luci https://fantastic-packages.github.io/packages/releases/24.10/packages/aarch64_cortex-a53/luci
+src/gz fantastic_packages_packages https://fantastic-packages.github.io/packages/releases/24.10/packages/aarch64_cortex-a53/packages
+src/gz fantastic_packages_special https://fantastic-packages.github.io/packages/releases/24.10/packages/aarch64_cortex-a53/special
 EOF
 
-# 禁用签名检查（三重防护）
+# 禁用签名检查
 echo ">> 禁用签名检查..."
 sed -i '/option check_signature/d' repositories.conf
 if [ -d "keys" ]; then
     rm -f keys/*.gpg keys/*.asc 2>/dev/null || true
-    echo ">> 已清理 keys 目录"
 fi
 export IGNORE_SIGNATURES=1
 
 echo -e "${GREEN}>> Feeds 配置完成${NC}"
+echo ""
+echo -e "${YELLOW}>> 注意: 以下包来自源码仓库，没有预编译 opkg 源，Image Builder 无法安装:${NC}"
+echo "   - autocore, automount, ntfs3-mount, luci-app-turboacc (来自 Lean LEDE)"
+echo "   - luci-app-oaf (来自 OpenAppFilter，需手动下载 ipk 安装)"
+echo "   - luci-app-modem (来源不明)"
+echo "   - Crack-Campus-Network (来源不明)"
 
 # ============================================================
-# 3. 处理包列表（关键修复：正确提取包名）
+# 3. 处理包列表
 # ============================================================
 echo ""
 echo "============================================"
@@ -153,28 +161,12 @@ PACKAGES=""
 if [ -f "${PACKAGE_LIST}" ]; then
     echo ">> 读取包列表: ${PACKAGE_LIST}"
     
-    # 关键修复：用 awk '{print $1}' 提取每行的第一个字段（包名）
-    # 支持格式：
-    #   - 纯包名: "luci-app-passwall"
-    #   - opkg格式: "luci-app-passwall - 2023.11.01~44365eb1-r1"
-    #   - 空格分隔: "luci-app-passwall 2023.11.01~44365eb1-r1"
-    #
-    # 过滤规则：
-    #   1. 去掉空行
-    #   2. 去掉注释行（以 # 开头）
-    #   3. 去掉 kmod-* 内核模块（避免内核版本不匹配）
-    #   4. awk '{print $1}' 提取包名
-    #   5. sort -u 去重
+    # 提取包名（支持 opkg list-installed 格式）
+    # 过滤: 空行、注释行、kmod-* 内核模块
+    FILTERED_PKGS=$(grep -v '^\s*$' "${PACKAGE_LIST}" | grep -v '^#' | grep -v '^kmod-' | awk '{print $1}' | sort -u)
     
-    RAW_LINES=$(grep -v '^\s*$' "${PACKAGE_LIST}" | grep -v '^#')
-    
-    # 统计原始行数
-    TOTAL_LINES=$(echo "${RAW_LINES}" | wc -l)
-    
-    # 提取包名并过滤
-    FILTERED_PKGS=$(echo "${RAW_LINES}" | grep -v '^kmod-' | awk '{print $1}' | sort -u)
-    
-    KMOD_COUNT=$(echo "${RAW_LINES}" | grep -c '^kmod-' 2>/dev/null || echo "0")
+    KMOD_COUNT=$(grep -c '^kmod-' "${PACKAGE_LIST}" 2>/dev/null || echo "0")
+    TOTAL_LINES=$(grep -v '^\s*$' "${PACKAGE_LIST}" | grep -v '^#' | wc -l)
     FINAL_COUNT=$(echo "${FILTERED_PKGS}" | wc -l)
     
     echo ">> 原始行数: ${TOTAL_LINES}"
@@ -183,61 +175,90 @@ if [ -f "${PACKAGE_LIST}" ]; then
     fi
     echo ">> 有效包数: ${FINAL_COUNT}"
     
-    # 转成空格分隔的字符串
     PACKAGES=$(echo "${FILTERED_PKGS}" | tr '\n' ' ')
+    PACKAGES=$(echo "${PACKAGES}" | sed 's/^ *//;s/ *$//;s/  */ /g')
     
-    if [ -z "${PACKAGES}" ] || [ "${PACKAGES}" = " " ]; then
+    if [ -z "${PACKAGES}" ]; then
         echo -e "${YELLOW}>> 警告: 包列表为空，将使用默认包${NC}"
-        PACKAGES=""
     fi
     
-    # 调试输出：显示前10个包
     echo ">> 前10个包:"
     echo "${FILTERED_PKGS}" | head -10 | sed 's/^/   - /'
-    
 else
-    echo -e "${YELLOW}>> 未找到包列表: ${PACKAGE_LIST}${NC}"
-    echo ">> 将使用默认包构建"
+    echo -e "${YELLOW}>> 未找到包列表，将使用默认包${NC}"
 fi
 
 # ============================================================
-# 4. 构建固件
+# 4. 智能构建（自动排除未知包并重试）
 # ============================================================
 echo ""
 echo "============================================"
 echo "  步骤 4: 构建固件"
 echo "============================================"
-echo ">> Profile: ${PROFILE}"
-echo ">> 包含包数: $(echo ${PACKAGES} | wc -w)"
-echo ">> 日志文件: ${BUILD_LOG}"
-echo ""
+
+MAX_RETRIES=10
+RETRY=0
+BUILD_SUCCESS=false
 
 > "${BUILD_LOG}"
+> "${EXCLUDE_LOG}"
 
-echo ">> 开始构建..."
-set +e
-make image \
-    PROFILE="${PROFILE}" \
-    PACKAGES="${PACKAGES}" \
-    V=s 2>&1 | tee "${BUILD_LOG}"
-BUILD_EXIT=${PIPESTATUS[0]}
-set -e
-
-if [ ${BUILD_EXIT} -ne 0 ]; then
-    echo ""
-    echo "============================================"
-    echo -e "${RED}  构建失败${NC}"
-    echo "============================================"
-    echo ">> 错误摘要:"
-    grep -E "(ERROR|Error|failed|Cannot satisfy|not found|No such package|Unknown package)" "${BUILD_LOG}" | tail -30 || tail -n 30 "${BUILD_LOG}"
+while [ $RETRY -lt $MAX_RETRIES ]; do
+    if [ $RETRY -gt 0 ]; then
+        echo ""
+        echo -e "${YELLOW}>> 第 ${RETRY} 次重试构建...${NC}"
+    fi
     
+    echo ">> Profile: ${PROFILE}"
+    echo ">> 当前包数: $(echo ${PACKAGES} | wc -w)"
+    echo ">> 开始构建..."
+    
+    set +e
+    make image \
+        PROFILE="${PROFILE}" \
+        PACKAGES="${PACKAGES}" \
+        V=s 2>&1 | tee -a "${BUILD_LOG}"
+    BUILD_EXIT=${PIPESTATUS[0]}
+    set -e
+    
+    if [ ${BUILD_EXIT} -eq 0 ]; then
+        BUILD_SUCCESS=true
+        break
+    fi
+    
+    # 检查是否有 Unknown package 错误
+    UNKNOWN_PKGS=$(grep -oP "Unknown package '\K[^']+" "${BUILD_LOG}" | sort -u)
+    
+    if [ -z "${UNKNOWN_PKGS}" ]; then
+        # 不是 Unknown package 错误，是其他构建错误
+        echo ""
+        echo "============================================"
+        echo -e "${RED}  构建失败（非包缺失错误）${NC}"
+        echo "============================================"
+        grep -E "(ERROR|Error|failed|Cannot satisfy)" "${BUILD_LOG}" | tail -20 || tail -n 30 "${BUILD_LOG}"
+        exit 1
+    fi
+    
+    # 发现未知包，自动排除
     echo ""
-    echo ">> 排查建议:"
-    echo "   1. 如果显示 'Unknown package'，从 pkglist-20260905.txt 中删除对应包名"
-    echo "   2. 确保 openwrt.ai feeds 可访问:"
-    echo "      curl -s https://dl.openwrt.ai/releases/24.10/packages/aarch64_cortex-a53/base/Packages.gz | gunzip | head"
-    echo "   3. 尝试最小构建验证:"
-    echo "      make image PROFILE='${PROFILE}' PACKAGES='luci-base'"
+    echo -e "${YELLOW}>> 发现以下包不存在，自动排除:${NC}"
+    
+    for pkg in ${UNKNOWN_PKGS}; do
+        echo "   ❌ ${pkg}"
+        echo "${pkg}" >> "${EXCLUDE_LOG}"
+        # 从 PACKAGES 中移除
+        PACKAGES=$(echo " ${PACKAGES} " | sed "s/ ${pkg} / /g" | sed 's/^ *//;s/ *$//;s/  */ /g')
+    done
+    
+    RETRY=$((RETRY+1))
+    
+    # 清理日志准备下次构建
+    > "${BUILD_LOG}"
+done
+
+if [ "${BUILD_SUCCESS}" != "true" ]; then
+    echo ""
+    echo -e "${RED}ERROR: 达到最大重试次数 (${MAX_RETRIES})，构建失败${NC}"
     exit 1
 fi
 
@@ -249,10 +270,32 @@ echo "============================================"
 echo -e "${GREEN}  构建成功！${NC}"
 echo "============================================"
 
+if [ -s "${EXCLUDE_LOG}" ]; then
+    echo ""
+    echo -e "${YELLOW}>> 以下包因不存在而被自动排除:${NC}"
+    sort -u "${EXCLUDE_LOG}" | sed 's/^/   ❌ /'
+    echo ""
+    echo ">> 排除记录已保存至: ${EXCLUDE_LOG}"
+    echo ""
+    echo -e "${BLUE}>> 关于被排除包的说明:${NC}"
+    echo "   1. autocore / automount / ntfs3-mount / luci-app-turboacc"
+    echo "      → 来自 Lean LEDE 源码，无预编译 opkg 源"
+    echo "      → 如需使用，请用 Lean LEDE 源码编译完整固件"
+    echo ""
+    echo "   2. luci-app-oaf (OpenAppFilter)"
+    echo "      → 有预编译 ipk，但内核模块需匹配内核版本"
+    echo "      → 建议刷入固件后手动安装:"
+    echo "        https://github.com/destan19/OpenAppFilter/releases"
+    echo ""
+    echo "   3. luci-app-modem / Crack-Campus-Network"
+    echo "      → 来源不明或为小众仓库"
+    echo "      → 建议刷入固件后手动搜索安装"
+fi
+
 OUTPUT_DIR="bin/targets/${TARGET}/"
 if [ -d "${OUTPUT_DIR}" ]; then
-    echo ">> 产物目录: ${OUTPUT_DIR}"
     echo ""
+    echo ">> 产物目录: ${OUTPUT_DIR}"
     echo ">> 生成的固件文件:"
     ls -lh "${OUTPUT_DIR}"*.bin "${OUTPUT_DIR}"*.itb 2>/dev/null || true
     
