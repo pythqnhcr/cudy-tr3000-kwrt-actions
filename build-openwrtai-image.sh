@@ -4,8 +4,6 @@ set -euo pipefail
 # ============================================================
 # OpenGirl / Kwrt 24.10-SNAPSHOT 固件构建脚本
 # 适配: Cudy TR3000 v1 (mediatek/filogic, aarch64_cortex-a53)
-# 内核: 6.6.118
-# 作者: FirmwareSister (OpenGirl)
 # ============================================================
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -17,14 +15,13 @@ PACKAGE_LIST="${SCRIPT_DIR}/pkglist-20260905.txt"
 BUILD_LOG="${SCRIPT_DIR}/build.log"
 EXCLUDE_LOG="${SCRIPT_DIR}/excluded_packages.txt"
 
-# 已知问题包黑名单
+# 已知问题包黑名单（同时从默认包和用户列表中移除）
 PROBLEMATIC_PKGS="luci-lib-fs autocore automount ntfs3-mount luci-app-turboacc dnsmasq wifi-scripts speedtest-cli Crack-Campus-Network luci-app-adguardhome luci-app-autoshell luci-app-modem luci-app-oaf luci-proto-minieap netspeedtest kmod-mt7915e"
 
 # 颜色输出
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
 NC='\033[0m'
 
 echo "============================================"
@@ -32,27 +29,19 @@ echo "  OpenWrt Image Builder 下载与构建"
 echo "============================================"
 echo ">> 版本: ${RELEASE}"
 echo ">> 设备: ${PROFILE}"
-echo ">> 目标: ${TARGET}"
 echo ""
 
-# ============================================================
 # 0. 环境检查
-# ============================================================
 echo ">> 检查依赖..."
 for cmd in curl tar zstd awk grep sed; do
     if ! command -v "$cmd" &> /dev/null; then
         echo -e "${RED}ERROR: 未找到命令: $cmd${NC}"
-        if [ "$cmd" = "zstd" ]; then
-            echo ">> 安装命令: sudo apt-get update && sudo apt-get install -y zstd"
-        fi
         exit 1
     fi
 done
 echo -e "${GREEN}>> 环境检查通过${NC}"
 
-# ============================================================
-# 1. 解析并下载 Image Builder
-# ============================================================
+# 1. 下载 Image Builder
 echo ""
 echo "============================================"
 echo "  步骤 1: 下载 Image Builder"
@@ -60,19 +49,15 @@ echo "============================================"
 
 echo ">> 解析 Image Builder 文件名..."
 IB_FILE=$(curl -fsSL "${BASE_URL}" | grep -o 'openwrt-imagebuilder-[^"<>]*\.tar\.zst' | head -n1)
-
 if [ -z "${IB_FILE}" ]; then
-    echo ">> 主页面解析失败，尝试从 sha256sums 获取..."
     IB_FILE=$(curl -fsSL "${BASE_URL}sha256sums" 2>/dev/null | grep "imagebuilder.*\.tar\.zst" | awk '{print $2}' | head -n1)
 fi
-
 if [ -z "${IB_FILE}" ]; then
     echo -e "${RED}ERROR: 无法获取 Image Builder 文件名${NC}"
     exit 1
 fi
 
 echo -e "${GREEN}>> 找到文件: ${IB_FILE}${NC}"
-
 if [ -s "${IB_FILE}" ]; then
     echo ">> 文件已存在，跳过下载"
 else
@@ -83,37 +68,20 @@ else
     }
 fi
 
-if [ ! -s "${IB_FILE}" ]; then
-    echo -e "${RED}ERROR: 下载文件为空${NC}"
-    exit 1
-fi
-
 echo ">> 解压 Image Builder..."
-tar --zstd -xf "${IB_FILE}" || {
-    echo -e "${RED}ERROR: 解压失败${NC}"
-    exit 1
-}
+tar --zstd -xf "${IB_FILE}"
 
 IB_DIR="$(find . -maxdepth 1 -type d -name 'openwrt-imagebuilder-*' | head -n1)"
-if [ -z "${IB_DIR}" ]; then
-    echo -e "${RED}ERROR: 未找到 Image Builder 目录${NC}"
-    exit 1
-fi
-
 cd "${IB_DIR}"
 echo -e "${GREEN}>> 进入目录: $(pwd)${NC}"
 
-# ============================================================
 # 2. 配置 Feeds
-# ============================================================
 echo ""
 echo "============================================"
 echo "  步骤 2: 配置 Feeds"
 echo "============================================"
 
 cp repositories.conf repositories.conf.bak
-
-echo ">> 添加第三方预编译源..."
 
 cat >> repositories.conf << 'EOF'
 
@@ -140,9 +108,7 @@ export IGNORE_SIGNATURES=1
 
 echo -e "${GREEN}>> Feeds 配置完成${NC}"
 
-# ============================================================
 # 3. 处理包列表
-# ============================================================
 echo ""
 echo "============================================"
 echo "  步骤 3: 处理包列表"
@@ -159,10 +125,10 @@ if [ -f "${PACKAGE_LIST}" ]; then
     TOTAL_LINES=$(echo "${RAW_PKGS}" | wc -l)
     KMOD_COUNT=$(echo "${RAW_PKGS}" | grep -c '^kmod-' || echo "0")
     
-    # 步骤1: 过滤 kmod-*
+    # 过滤 kmod-*
     FILTERED_PKGS=$(echo "${RAW_PKGS}" | grep -v '^kmod-')
     
-    # 步骤2: 预过滤已知问题包
+    # 预过滤已知问题包
     PROB_COUNT=0
     for bad_pkg in ${PROBLEMATIC_PKGS}; do
         if echo "${FILTERED_PKGS}" | grep -qx "${bad_pkg}"; then
@@ -200,8 +166,17 @@ else
 fi
 
 # ============================================================
-# 4. 智能构建（自动排除未知包和冲突包并重试）
+# 关键修复：显式移除默认包中的冲突包
 # ============================================================
+echo ""
+echo ">> 显式移除默认包中的冲突包..."
+for bad_pkg in ${PROBLEMATIC_PKGS}; do
+    # 在 PACKAGES 开头添加 -包名，确保 Image Builder 从默认包中移除它
+    PACKAGES="-${bad_pkg} ${PACKAGES}"
+done
+echo -e "${GREEN}>> 已添加移除指令${NC}"
+
+# 4. 智能构建
 echo ""
 echo "============================================"
 echo "  步骤 4: 构建固件"
@@ -276,12 +251,12 @@ while [ $RETRY -lt $MAX_RETRIES ]; do
                 continue
             fi
             echo "   ❌ ${pkg} (File clash)"
-            echo "${pkg}" >> "${EXCLUDE_PKGS}"
+            echo "${pkg}" >> "${EXCLUDE_LOG}"
             EXCLUDE_PKGS="${EXCLUDE_PKGS} ${pkg}"
         done
     fi
     
-    # 检测4: 依赖不满足或架构不兼容
+    # 检测4: 依赖不满足
     DEP_FAILED_PKGS=$(grep -E "pkg_hash_check_unresolved: cannot find dependency|pkg_hash_fetch_best_installation_candidate: Packages for .* found, but incompatible" "${BUILD_LOG}" | grep -oP "Packages for \K\S+" | sort -u)
     if [ -n "${DEP_FAILED_PKGS}" ]; then
         echo ""
@@ -306,9 +281,11 @@ while [ $RETRY -lt $MAX_RETRIES ]; do
         exit 1
     fi
     
-    # 从 PACKAGES 中移除所有排除的包
+    # 从 PACKAGES 中移除所有排除的包，并添加 -前缀确保默认包也被移除
     for pkg in ${EXCLUDE_PKGS}; do
         PACKAGES=$(echo " ${PACKAGES} " | sed "s/ ${pkg} / /g" | sed 's/^ *//;s/ *$//;s/  */ /g')
+        PACKAGES=$(echo " ${PACKAGES} " | sed "s/ -${pkg} / /g" | sed 's/^ *//;s/ *$//;s/  */ /g')
+        PACKAGES="-${pkg} ${PACKAGES}"
     done
     
     RETRY=$((RETRY+1))
@@ -321,9 +298,7 @@ if [ "${BUILD_SUCCESS}" != "true" ]; then
     exit 1
 fi
 
-# ============================================================
 # 5. 输出结果
-# ============================================================
 echo ""
 echo "============================================"
 echo -e "${GREEN}  构建成功！${NC}"
@@ -335,18 +310,6 @@ if [ -s "${EXCLUDE_LOG}" ]; then
     sort -u "${EXCLUDE_LOG}" | sed 's/^/   ❌ /'
     echo ""
     echo ">> 排除记录已保存至: ${EXCLUDE_LOG}"
-    echo ""
-    echo -e "${BLUE}>> 排除原因说明:${NC}"
-    echo "   - kmod-*: 内核模块版本不匹配 Image Builder 内核"
-    echo "   - dnsmasq: 与 dnsmasq-full 冲突，后者已包含所有功能"
-    echo "   - wifi-scripts: 与 my-default-settings 文件冲突"
-    echo "   - luci-app-adguardhome: 与 adguardhome 文件冲突"
-    echo "   - luci-app-autoshell: 与 luci-app-autoreboot 文件冲突"
-    echo "   - luci-proto-minieap: 与 luci-app-minieap 文件冲突"
-    echo "   - netspeedtest: 与 luci-app-netspeedtest 文件冲突"
-    echo "   - luci-app-modem: 依赖 kmod-pcie_mhi 缺失"
-    echo "   - luci-app-oaf: 依赖 kmod-oaf 缺失"
-    echo "   - 其他: 在所有 feeds 中均不存在或存在文件冲突"
 fi
 
 OUTPUT_DIR="bin/targets/${TARGET}/"
