@@ -40,6 +40,19 @@ jobs:
           chmod +x build-openwrtai-image.sh
           ./build-openwrtai-image.sh
 
+      - name: Collect firmware files
+        run: |
+          mkdir -p outputs
+          IB_DIR=$(find . -maxdepth 1 -type d -name 'openwrt-imagebuilder-*' | head -n1)
+          if [ -n "$IB_DIR" ]; then
+            echo ">> 从 $IB_DIR 复制固件..."
+            cp -v "$IB_DIR/bin/targets/mediatek/filogic/"*.bin outputs/ 2>/dev/null || true
+            cp -v "$IB_DIR/bin/targets/mediatek/filogic/"*.itb outputs/ 2>/dev/null || true
+            cp -v "$IB_DIR/bin/targets/mediatek/filogic/sha256sums" outputs/ 2>/dev/null || true
+          fi
+          echo ">> outputs 目录内容:"
+          ls -lh outputs/
+
       - name: Upload firmware
         if: success()
         uses: actions/upload-artifact@v4
