@@ -3,19 +3,67 @@ name: Build Cudy TR3000 firmware
 on:
   workflow_dispatch:
 
+env:
+  TZ: Asia/Shanghai
+
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
+    
     steps:
-      - uses: actions/checkout@v4
-      - name: Run openwrt.ai Image Builder
-        working-directory: firmware-build
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Free up disk space
+        run: |
+          echo "=== Before cleanup ==="
+          df -h
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /opt/ghc
+          sudo rm -rf "/usr/local/share/boost"
+          sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+          sudo apt-get clean
+          docker rmi $(docker images -q) 2>/dev/null || true
+          echo "=== After cleanup ==="
+          df -h
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zstd build-essential gawk wget file libssl-dev
+
+      - name: Run Image Builder
         run: |
           chmod +x build-openwrtai-image.sh
           ./build-openwrtai-image.sh
+
+      - name: Collect firmware files
+        if: success()
+        run: |
+          mkdir -p outputs
+          IB_DIR=$(find . -maxdepth 1 -type d -name 'openwrt-imagebuilder-*' | head -n1)
+          if [ -n "$IB_DIR" ]; then
+            cp -v "$IB_DIR/bin/targets/mediatek/filogic/"*.bin outputs/ 2>/dev/null || true
+            cp -v "$IB_DIR/bin/targets/mediatek/filogic/"*.itb outputs/ 2>/dev/null || true
+            cp -v "$IB_DIR/bin/targets/mediatek/filogic/"*.img outputs/ 2>/dev/null || true
+            cp -v "$IB_DIR/bin/targets/mediatek/filogic/sha256sums" outputs/ 2>/dev/null || true
+          fi
+          ls -lh outputs/
+
       - name: Upload firmware
+        if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: cudy-tr3000-firmware
-          path: firmware-build/bin/targets/mediatek/filogic/*
-          if-no-files-found: error
+          name: cudy-tr3000-firmware-${{ github.run_number }}
+          path: outputs/
+          retention-days: 7
+
+      - name: Upload build logs (on failure)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs-${{ github.run_number }}
+          path: |
+            build.log
+            excluded_packages.txt
+          retention-days: 3
