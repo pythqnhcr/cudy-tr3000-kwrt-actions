@@ -17,8 +17,8 @@ PACKAGE_LIST="${SCRIPT_DIR}/pkglist-20260905.txt"
 BUILD_LOG="${SCRIPT_DIR}/build.log"
 EXCLUDE_LOG="${SCRIPT_DIR}/excluded_packages.txt"
 
-# 已知问题包黑名单（在 24.10 下会导致构建失败或已废弃）
-PROBLEMATIC_PKGS="luci-lib-fs autocore automount ntfs3-mount luci-app-turboacc"
+# 已知问题包黑名单
+PROBLEMATIC_PKGS="luci-lib-fs autocore automount ntfs3-mount luci-app-turboacc dnsmasq wifi-scripts speedtest-cli"
 
 # 颜色输出
 RED='\033[0;31m'
@@ -141,7 +141,7 @@ export IGNORE_SIGNATURES=1
 echo -e "${GREEN}>> Feeds 配置完成${NC}"
 
 # ============================================================
-# 3. 处理包列表（预过滤已知问题包）
+# 3. 处理包列表
 # ============================================================
 echo ""
 echo "============================================"
@@ -156,14 +156,13 @@ if [ -f "${PACKAGE_LIST}" ]; then
     # 提取包名（支持 opkg list-installed 格式）
     RAW_PKGS=$(grep -v '^\s*$' "${PACKAGE_LIST}" | grep -v '^#' | awk '{print $1}')
     
-    # 统计
     TOTAL_LINES=$(echo "${RAW_PKGS}" | wc -l)
     KMOD_COUNT=$(echo "${RAW_PKGS}" | grep -c '^kmod-' || echo "0")
     
     # 步骤1: 过滤 kmod-*
     FILTERED_PKGS=$(echo "${RAW_PKGS}" | grep -v '^kmod-')
     
-    # 步骤2: 预过滤已知问题包（避免 postinst 失败）
+    # 步骤2: 预过滤已知问题包
     PROB_COUNT=0
     for bad_pkg in ${PROBLEMATIC_PKGS}; do
         if echo "${FILTERED_PKGS}" | grep -qx "${bad_pkg}"; then
@@ -174,7 +173,7 @@ if [ -f "${PACKAGE_LIST}" ]; then
         fi
     done
     
-    # 去重并排序
+    # 去重排序
     FILTERED_PKGS=$(echo "${FILTERED_PKGS}" | sort -u)
     FINAL_COUNT=$(echo "${FILTERED_PKGS}" | wc -l)
     
@@ -201,14 +200,14 @@ else
 fi
 
 # ============================================================
-# 4. 智能构建（自动排除未知包并重试）
+# 4. 智能构建（自动排除未知包和冲突包并重试）
 # ============================================================
 echo ""
 echo "============================================"
 echo "  步骤 4: 构建固件"
 echo "============================================"
 
-MAX_RETRIES=10
+MAX_RETRIES=15
 RETRY=0
 BUILD_SUCCESS=false
 
@@ -237,26 +236,63 @@ while [ $RETRY -lt $MAX_RETRIES ]; do
         break
     fi
     
-    # 检查是否有 Unknown package 错误
-    UNKNOWN_PKGS=$(grep -oP "Unknown package '\K[^']+" "${BUILD_LOG}" | sort -u)
+    # 收集所有需要排除的包
+    EXCLUDE_PKGS=""
     
-    if [ -z "${UNKNOWN_PKGS}" ]; then
-        # 不是 Unknown package 错误
+    # 检测1: Unknown package
+    UNKNOWN_PKGS=$(grep -oP "Unknown package '\K[^']+" "${BUILD_LOG}" | sort -u)
+    if [ -n "${UNKNOWN_PKGS}" ]; then
+        echo ""
+        echo -e "${YELLOW}>> 发现未知包:${NC}"
+        for pkg in ${UNKNOWN_PKGS}; do
+            echo "   ❌ ${pkg} (Unknown)"
+            echo "${pkg}" >> "${EXCLUDE_LOG}"
+            EXCLUDE_PKGS="${EXCLUDE_PKGS} ${pkg}"
+        done
+    fi
+    
+    # 检测2: Cannot install package（文件冲突或依赖问题）
+    CONFLICT_PKGS=$(grep -oP "Cannot install package \K\S+" "${BUILD_LOG}" | sort -u)
+    if [ -n "${CONFLICT_PKGS}" ]; then
+        echo ""
+        echo -e "${YELLOW}>> 发现冲突/无法安装的包:${NC}"
+        for pkg in ${CONFLICT_PKGS}; do
+            if echo "${EXCLUDE_PKGS}" | grep -qw "${pkg}"; then
+                continue
+            fi
+            echo "   ❌ ${pkg} (Conflict/Install failed)"
+            echo "${pkg}" >> "${EXCLUDE_LOG}"
+            EXCLUDE_PKGS="${EXCLUDE_PKGS} ${pkg}"
+        done
+    fi
+    
+    # 检测3: check_data_file_clashes - 从日志中提取冲突的包名
+    CLASH_PKGS=$(grep "check_data_file_clashes: Package" "${BUILD_LOG}" | sed 's/.*Package //;s/ wants.*//' | sort -u)
+    if [ -n "${CLASH_PKGS}" ]; then
+        echo ""
+        echo -e "${YELLOW}>> 发现文件冲突的包:${NC}"
+        for pkg in ${CLASH_PKGS}; do
+            if echo "${EXCLUDE_PKGS}" | grep -qw "${pkg}"; then
+                continue
+            fi
+            echo "   ❌ ${pkg} (File clash)"
+            echo "${pkg}" >> "${EXCLUDE_LOG}"
+            EXCLUDE_PKGS="${EXCLUDE_PKGS} ${pkg}"
+        done
+    fi
+    
+    # 如果没有发现任何可排除的包，说明是其他错误
+    if [ -z "${EXCLUDE_PKGS}" ] || [ "${EXCLUDE_PKGS}" = " " ]; then
         echo ""
         echo "============================================"
-        echo -e "${RED}  构建失败（非包缺失错误）${NC}"
+        echo -e "${RED}  构建失败（无法自动修复的错误）${NC}"
         echo "============================================"
         grep -E "(ERROR|Error|failed|Cannot satisfy)" "${BUILD_LOG}" | tail -30 || tail -n 50 "${BUILD_LOG}"
         exit 1
     fi
     
-    # 发现未知包，自动排除
-    echo ""
-    echo -e "${YELLOW}>> 发现以下包不存在，自动排除:${NC}"
-    
-    for pkg in ${UNKNOWN_PKGS}; do
-        echo "   ❌ ${pkg}"
-        echo "${pkg}" >> "${EXCLUDE_LOG}"
+    # 从 PACKAGES 中移除所有排除的包
+    for pkg in ${EXCLUDE_PKGS}; do
         PACKAGES=$(echo " ${PACKAGES} " | sed "s/ ${pkg} / /g" | sed 's/^ *//;s/ *$//;s/  */ /g')
     done
     
@@ -287,9 +323,12 @@ if [ -s "${EXCLUDE_LOG}" ]; then
     echo ""
     echo -e "${BLUE}>> 排除原因说明:${NC}"
     echo "   - kmod-*: 内核模块版本不匹配 Image Builder 内核"
+    echo "   - dnsmasq: 与 dnsmasq-full 冲突，后者已包含所有功能"
+    echo "   - wifi-scripts: 与 my-default-settings 文件冲突"
     echo "   - luci-lib-fs / autocore / automount / ntfs3-mount / luci-app-turboacc:"
-    echo "     来自 Lean LEDE 源码或已废弃，24.10 无预编译包或 postinst 失败"
-    echo "   - 其他: 在所有 feeds 中均不存在"
+    echo "     来自 Lean LEDE 源码或已废弃，24.10 下会导致 postinst 失败"
+    echo "   - speedtest-cli: 在所有 feeds 中均不存在"
+    echo "   - 其他: 在所有 feeds 中均不存在或存在文件冲突"
 fi
 
 OUTPUT_DIR="bin/targets/${TARGET}/"
