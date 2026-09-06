@@ -17,10 +17,14 @@ PACKAGE_LIST="${SCRIPT_DIR}/pkglist-20260905.txt"
 BUILD_LOG="${SCRIPT_DIR}/build.log"
 EXCLUDE_LOG="${SCRIPT_DIR}/excluded_packages.txt"
 
+# 已知问题包黑名单（在 24.10 下会导致构建失败或已废弃）
+PROBLEMATIC_PKGS="luci-lib-fs autocore automount ntfs3-mount luci-app-turboacc"
+
 # 颜色输出
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
 NC='\033[0m'
 
 echo "============================================"
@@ -137,7 +141,7 @@ export IGNORE_SIGNATURES=1
 echo -e "${GREEN}>> Feeds 配置完成${NC}"
 
 # ============================================================
-# 3. 处理包列表
+# 3. 处理包列表（预过滤已知问题包）
 # ============================================================
 echo ""
 echo "============================================"
@@ -150,15 +154,36 @@ if [ -f "${PACKAGE_LIST}" ]; then
     echo ">> 读取包列表: ${PACKAGE_LIST}"
     
     # 提取包名（支持 opkg list-installed 格式）
-    FILTERED_PKGS=$(grep -v '^\s*$' "${PACKAGE_LIST}" | grep -v '^#' | grep -v '^kmod-' | awk '{print $1}' | sort -u)
+    RAW_PKGS=$(grep -v '^\s*$' "${PACKAGE_LIST}" | grep -v '^#' | awk '{print $1}')
     
-    KMOD_COUNT=$(grep -c '^kmod-' "${PACKAGE_LIST}" 2>/dev/null || echo "0")
-    TOTAL_LINES=$(grep -v '^\s*$' "${PACKAGE_LIST}" | grep -v '^#' | wc -l)
+    # 统计
+    TOTAL_LINES=$(echo "${RAW_PKGS}" | wc -l)
+    KMOD_COUNT=$(echo "${RAW_PKGS}" | grep -c '^kmod-' || echo "0")
+    
+    # 步骤1: 过滤 kmod-*
+    FILTERED_PKGS=$(echo "${RAW_PKGS}" | grep -v '^kmod-')
+    
+    # 步骤2: 预过滤已知问题包（避免 postinst 失败）
+    PROB_COUNT=0
+    for bad_pkg in ${PROBLEMATIC_PKGS}; do
+        if echo "${FILTERED_PKGS}" | grep -qx "${bad_pkg}"; then
+            PROB_COUNT=$((PROB_COUNT+1))
+            echo -e "${YELLOW}>> 预过滤已知问题包: ${bad_pkg}${NC}"
+            echo "${bad_pkg}" >> "${EXCLUDE_LOG}"
+            FILTERED_PKGS=$(echo "${FILTERED_PKGS}" | grep -vx "${bad_pkg}")
+        fi
+    done
+    
+    # 去重并排序
+    FILTERED_PKGS=$(echo "${FILTERED_PKGS}" | sort -u)
     FINAL_COUNT=$(echo "${FILTERED_PKGS}" | wc -l)
     
-    echo ">> 原始行数: ${TOTAL_LINES}"
+    echo ">> 原始包数: ${TOTAL_LINES}"
     if [ "${KMOD_COUNT}" -gt 0 ]; then
         echo -e "${YELLOW}>> 已过滤 ${KMOD_COUNT} 个 kmod-* 内核模块${NC}"
+    fi
+    if [ "${PROB_COUNT}" -gt 0 ]; then
+        echo -e "${YELLOW}>> 已预过滤 ${PROB_COUNT} 个已知问题包${NC}"
     fi
     echo ">> 有效包数: ${FINAL_COUNT}"
     
@@ -188,7 +213,6 @@ RETRY=0
 BUILD_SUCCESS=false
 
 > "${BUILD_LOG}"
-> "${EXCLUDE_LOG}"
 
 while [ $RETRY -lt $MAX_RETRIES ]; do
     if [ $RETRY -gt 0 ]; then
@@ -256,10 +280,16 @@ echo "============================================"
 
 if [ -s "${EXCLUDE_LOG}" ]; then
     echo ""
-    echo -e "${YELLOW}>> 以下包因不存在而被自动排除:${NC}"
+    echo -e "${YELLOW}>> 以下包被排除（未安装）:${NC}"
     sort -u "${EXCLUDE_LOG}" | sed 's/^/   ❌ /'
     echo ""
     echo ">> 排除记录已保存至: ${EXCLUDE_LOG}"
+    echo ""
+    echo -e "${BLUE}>> 排除原因说明:${NC}"
+    echo "   - kmod-*: 内核模块版本不匹配 Image Builder 内核"
+    echo "   - luci-lib-fs / autocore / automount / ntfs3-mount / luci-app-turboacc:"
+    echo "     来自 Lean LEDE 源码或已废弃，24.10 无预编译包或 postinst 失败"
+    echo "   - 其他: 在所有 feeds 中均不存在"
 fi
 
 OUTPUT_DIR="bin/targets/${TARGET}/"
