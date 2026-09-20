@@ -1,0 +1,29 @@
+# Secrets and local credentials
+.env
+.env.*
+secrets/
+*.secret
+*.key
+*.pem
+*.ovpn
+
+# Router backups and firmware artifacts
+overlay/
+dump/
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.bin
+*.img
+*.ipk
+*.apk
+*.pid
+*.log
+
+# Local build output
+bin/
+tmp/
+outputs/
+.DS_Store
+Thumbs.db

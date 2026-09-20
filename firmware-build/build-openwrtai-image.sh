@@ -146,7 +146,7 @@ echo -e "${YELLOW}>> 注意: 以下包来自源码仓库，没有预编译 opkg 
 echo "   - autocore, automount, ntfs3-mount, luci-app-turboacc (来自 Lean LEDE)"
 echo "   - luci-app-oaf (来自 OpenAppFilter，需手动下载 ipk 安装)"
 echo "   - luci-app-modem (来源不明)"
-echo "   - Crack-Campus-Network (来源不明)"
+
 
 # ============================================================
 # 3. 处理包列表
@@ -287,7 +287,7 @@ if [ -s "${EXCLUDE_LOG}" ]; then
     echo "      → 建议刷入固件后手动安装:"
     echo "        https://github.com/destan19/OpenAppFilter/releases"
     echo ""
-    echo "   3. luci-app-modem / Crack-Campus-Network"
+    echo "   3. luci-app-modem"
     echo "      → 来源不明或为小众仓库"
     echo "      → 建议刷入固件后手动搜索安装"
 fi

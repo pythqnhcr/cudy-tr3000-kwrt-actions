@@ -16,7 +16,7 @@ BUILD_LOG="${SCRIPT_DIR}/build.log"
 EXCLUDE_LOG="${SCRIPT_DIR}/excluded_packages.txt"
 
 # 已知问题包黑名单（同时从默认包和用户列表中移除）
-PROBLEMATIC_PKGS="luci-lib-fs autocore automount ntfs3-mount luci-app-turboacc dnsmasq wifi-scripts speedtest-cli Crack-Campus-Network luci-app-adguardhome luci-app-autoshell luci-app-modem luci-app-oaf luci-proto-minieap netspeedtest kmod-mt7915e"
+PROBLEMATIC_PKGS="luci-lib-fs autocore automount ntfs3-mount luci-app-turboacc dnsmasq wifi-scripts speedtest-cli luci-app-adguardhome luci-app-autoshell luci-app-modem luci-app-oaf luci-proto-minieap netspeedtest kmod-mt7915e"
 
 # 颜色输出
 RED='\033[0;31m'
