@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>UA2F Optional Guide</title>
+  <style>
+    :root { color-scheme: light dark; --line: #64748b33; }
+    body { margin: 0; font: 16px/1.6 system-ui, sans-serif; }
+    main { max-width: 760px; margin: auto; padding: 40px 22px 72px; }
+    h1 { font-size: 2rem; margin-bottom: .25rem; }
+    h2 { margin-top: 2rem; }
+    p { color: #64748b; }
+    pre { overflow-x: auto; padding: 14px; border: 1px solid var(--line); border-radius: 8px; }
+    a { color: #2563eb; }
+  </style>
+</head>
+<body>
+<main>
+  <h1>UA2F Optional Guide</h1>
+  <p>UA2F is an optional third-party dependency. No binary is bundled here.</p>
+
+  <h2>Install</h2>
+  <pre><code>opkg update
+opkg install ua2f
+
+# APK-based releases
+apk update
+apk add ua2f</code></pre>
+
+  <h2>Enable</h2>
+  <pre><code>uci set ua2f.enabled.enabled=1
+uci set ua2f.firewall.handle_fw=1
+uci commit ua2f
+/etc/init.d/ua2f enable
+/etc/init.d/ua2f restart</code></pre>
+
+  <h2>Verify</h2>
+  <pre><code>/etc/init.d/ua2f status
+ps w | grep '[u]a2f'</code></pre>
+
+  <h2>Disable</h2>
+  <pre><code>/etc/init.d/ua2f stop
+/etc/init.d/ua2f disable</code></pre>
+
+  <p><a href="https://github.com/Zxilly/UA2F">Upstream project</a></p>
+</main>
+</body>
+</html>

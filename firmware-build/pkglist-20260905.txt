@@ -1,4 +1,3 @@
-Crack-Campus-Network - 114514
 adguardhome - 0.107.57-r1
 appfilter - 6.1.6-r30
 attr - 2.5.2-r3
@@ -527,7 +526,6 @@ tcping - 0.3-r5
 terminfo - 6.4-r2
 trojan-plus - 10.0.3-r7
 ttyd - 1.7.3-r1
-ua2f - 4.10.2-r8
 ubi-utils - 2.2.1-r1
 uboot-envtools - 2024.07-r1
 ubox - 2024.04.26~85f10530-r1

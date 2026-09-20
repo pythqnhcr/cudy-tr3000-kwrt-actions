@@ -1,0 +1,22 @@
+#!/bin/sh
+#===========================================================
+# /etc/hotplug.d/iface/99-campus-login
+# WAN 口 up / 续租后, 立刻跑一次检测(不重启接口)
+#===========================================================
+
+[ "$ACTION" = "ifup" ] || [ "$ACTION" = "ifupdate" ] || exit 0
+[ "$INTERFACE" = "wan" ] || [ "$INTERFACE" = "wan6" ] || exit 0
+
+# 守护进程已经在跑时由它自己检测重登，避免 WAN ifupdate 连续触发导致重复登录风暴。
+if [ -f /var/run/campus-login.pid ] && kill -0 "$(cat /var/run/campus-login.pid 2>/dev/null)" 2>/dev/null; then
+    logger -t campus-hotplug "campus-login 守护进程运行中, 跳过重复触发"
+    exit 0
+fi
+
+logger -t campus-hotplug "接口 $INTERFACE $ACTION, 触发一次检测"
+
+# 等 DHCP 拿完地址
+sleep 5
+
+# 守护进程不在时交给 init 脚本拉起; init 会自动进入持续检测模式。
+/etc/init.d/campus-login start 2>&1 | logger -t campus-hotplug

@@ -1,0 +1,30 @@
+<script type="text/javascript">//<![CDATA[
+XHR.poll(3, '<%=url([[admin]], [[services]], [[campus_login]], [[status]])%>', null,
+    function(x, data) {
+        var state = document.getElementById('campus_login_state');
+        var online = document.getElementById('campus_login_online');
+        var logs = document.getElementById('campus_login_logs');
+        if (!data || !state) return;
+
+        state.innerHTML = data.running
+            ? '<em style="color:green"><b>登录服务运行中</b></em>'
+            : '<em style="color:red"><b>登录服务未运行</b></em>';
+        online.innerHTML = data.online
+            ? '<em style="color:green"><b>' + data.online + '</b></em>'
+            : '<em style="color:orange"><b>状态未知</b></em>';
+        if (logs && data.logs) logs.textContent = data.logs;
+    }
+);
+//]]>
+</script>
+
+<fieldset class="cbi-section">
+    <legend><%:运行状态%></legend>
+    <p><%:服务状态%>：<span id="campus_login_state"><%:正在查询...%></span></p>
+    <p><%:网络状态%>：<span id="campus_login_online"><%:正在查询...%></span></p>
+</fieldset>
+
+<fieldset class="cbi-section">
+    <legend><%:最近日志%></legend>
+    <pre id="campus_login_logs" style="max-height:260px;overflow:auto;white-space:pre-wrap;">正在读取...</pre>
+</fieldset>

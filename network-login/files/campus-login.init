@@ -1,0 +1,35 @@
+#!/bin/sh /etc/rc.common
+# /etc/init.d/campus-login
+# OpenWrt procd 启动脚本: 开机自动拉起校园网登录守护进程
+
+START=99
+STOP=10
+
+PROG=/root/campus-login.sh
+
+start() {
+    enabled="$(uci -q get campus_login.main.enabled)"
+    if [ "$enabled" = "0" ]; then
+        echo "campus-login disabled by LuCI"
+        return 0
+    fi
+    if [ ! -x "$PROG" ]; then
+        echo "$PROG 不存在或不可执行"
+        return 1
+    fi
+    "$PROG" --daemon >/dev/null 2>&1 &
+}
+
+stop() {
+    "$PROG" --stop
+}
+
+status() {
+    "$PROG" --status
+}
+
+reload() {
+    stop
+    sleep 1
+    start
+}
